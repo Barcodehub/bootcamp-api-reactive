@@ -14,5 +14,14 @@ CREATE TABLE IF NOT EXISTS bootcamp_capacity (
     CONSTRAINT uk_bootcamp_capacity UNIQUE (bootcamp_id, capacity_id)
 );
 
+CREATE TABLE IF NOT EXISTS bootcamp_user (
+    id BIGSERIAL PRIMARY KEY,
+    bootcamp_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    enrolled_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_bootcamp_user_bootcamp FOREIGN KEY (bootcamp_id) REFERENCES bootcamp(id) ON DELETE CASCADE,
+    CONSTRAINT uk_bootcamp_user UNIQUE (bootcamp_id, user_id)
+);
 
-
+CREATE INDEX IF NOT EXISTS idx_bootcamp_user_user_id ON bootcamp_user(user_id);
+CREATE INDEX IF NOT EXISTS idx_bootcamp_user_bootcamp_id ON bootcamp_user(bootcamp_id);

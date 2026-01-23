@@ -31,7 +31,19 @@ public enum TechnicalMessage {
     CAPACITY_TECHNOLOGIES_MAX("400", "Bootcamp cannot have more than 20 capacities", "capacityIds"),
     CAPACITY_TECHNOLOGIES_DUPLICATED("400", "Bootcamp cannot have duplicate capacities", "capacityIds"),
     TECHNOLOGIES_NOT_FOUND("400", "Some capacities do not exist", "capacityIds"),
-    TECHNOLOGY_SERVICE_ERROR("500", "Error communicating with capacity service", "")
+    TECHNOLOGY_SERVICE_ERROR("500", "Error communicating with capacity service", ""),
+    USER_SERVICE_ERROR("500", "Error communicating with user service", ""),
+    USER_NOT_FOUND("404", "User not found", "userId"),
+    USER_ALREADY_ENROLLED("400", "User is already enrolled in this bootcamp", "userId"),
+    MAX_BOOTCAMPS_REACHED("400", "User cannot enroll in more than 5 bootcamps", "userId"),
+    BOOTCAMP_DATE_CONFLICT("400", "User is already enrolled in a bootcamp with conflicting dates", "bootcampId"),
+    ENROLLMENT_NOT_FOUND("404", "Enrollment not found", "enrollmentId"),
+    ENROLLMENT_CREATED("201", "User enrolled successfully", ""),
+    ENROLLMENT_DELETED("200", "User unenrolled successfully", ""),
+    TOKEN_EXPIRED("401", "Authentication token has expired", "token"),
+    TOKEN_INVALID("401", "Invalid authentication token", "token"),
+    TOKEN_REQUIRED("401", "Authentication token is required", "Authorization"),
+    UNAUTHORIZED_ACTION("403", "You are not authorized to perform this action", "")
     ;
 
     private final String code;
