@@ -3,6 +3,7 @@ package com.example.resilient_api.infrastructure.entrypoints.handler;
 import com.example.resilient_api.domain.api.EnrollmentServicePort;
 import com.example.resilient_api.domain.enums.TechnicalMessage;
 import com.example.resilient_api.domain.exceptions.BusinessException;
+import com.example.resilient_api.infrastructure.adapters.webclient.MetricsWebClient;
 import com.example.resilient_api.infrastructure.entrypoints.dto.EnrollmentRequestDTO;
 import com.example.resilient_api.infrastructure.entrypoints.dto.EnrollmentResponseDTO;
 import com.example.resilient_api.infrastructure.entrypoints.mapper.BootcampMapper;
@@ -28,9 +29,11 @@ public class EnrollmentHandlerImpl {
 
     private final EnrollmentServicePort enrollmentServicePort;
     private final BootcampMapper bootcampMapper;
+    private final MetricsWebClient metricsWebClient;
 
     public Mono<ServerResponse> enrollUser(ServerRequest request) {
         String messageId = getMessageId(request);
+        String authToken = request.headers().firstHeader("Authorization");
         log.info("Received enroll user request with messageId: {}", messageId);
 
         // Extraer userId del header enviado por capacity-api
@@ -48,7 +51,16 @@ public class EnrollmentHandlerImpl {
                                 enrollmentRequest.getBootcampId(),
                                 userId,
                                 messageId
-                        ))
+                        ).doOnSuccess(enrollment -> {
+                            // Actualizar reporte de forma asíncrona sin afectar el rendimiento
+                            if (authToken != null) {
+                                metricsWebClient.registerBootcampReportAsync(
+                                    enrollmentRequest.getBootcampId(),
+                                    messageId,
+                                    authToken
+                                );
+                            }
+                        }))
                 .flatMap(enrollment -> {
                     EnrollmentResponseDTO responseDTO = EnrollmentResponseDTO.builder()
                             .id(enrollment.id())
@@ -66,12 +78,19 @@ public class EnrollmentHandlerImpl {
 
     public Mono<ServerResponse> unenrollUser(ServerRequest request) {
         String messageId = getMessageId(request);
+        String authToken = request.headers().firstHeader("Authorization");
         log.info("Received unenroll user request with messageId: {}", messageId);
 
         Long bootcampId = Long.parseLong(request.pathVariable("bootcampId"));
         Long userId = Long.parseLong(request.pathVariable("userId"));
 
         return enrollmentServicePort.unenrollUserFromBootcamp(bootcampId, userId, messageId)
+                .doOnSuccess(v -> {
+                    // Actualizar reporte de forma asíncrona sin afectar el rendimiento
+                    if (authToken != null) {
+                        metricsWebClient.registerBootcampReportAsync(bootcampId, messageId, authToken);
+                    }
+                })
                 .flatMap(v -> {
                     APIResponse apiResponse = APIResponse.builder()
                             .code(TechnicalMessage.ENROLLMENT_DELETED.getCode())
@@ -98,6 +117,22 @@ public class EnrollmentHandlerImpl {
                 .flatMap(bootcamps -> ServerResponse.ok().bodyValue(bootcamps))
                 .doOnSuccess(response -> log.info("Successfully processed get user bootcamps request with messageId: {}", messageId))
                 .doOnError(error -> log.error("Error processing get user bootcamps request with messageId: {}", messageId, error));
+    }
+
+    public Mono<ServerResponse> getUserIdsByBootcampId(ServerRequest request) {
+        String messageId = getMessageId(request);
+        Long bootcampId = Long.parseLong(request.pathVariable("id"));
+
+        log.info("Received get user IDs by bootcamp request for bootcampId: {} with messageId: {}", bootcampId, messageId);
+
+        return enrollmentServicePort.getUserIdsByBootcampId(bootcampId, messageId)
+                .collectList()
+                .flatMap(userIds -> {
+                    log.info("Found {} users for bootcamp {} with messageId: {}", userIds.size(), bootcampId, messageId);
+                    return ServerResponse.ok().bodyValue(userIds);
+                })
+                .doOnSuccess(response -> log.info("Successfully processed get user IDs request with messageId: {}", messageId))
+                .doOnError(error -> log.error("Error processing get user IDs request with messageId: {}", messageId, error));
     }
 
     private String getMessageId(ServerRequest request) {

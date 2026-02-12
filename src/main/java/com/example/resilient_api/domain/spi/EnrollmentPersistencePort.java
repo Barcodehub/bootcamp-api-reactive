@@ -11,5 +11,6 @@ public interface EnrollmentPersistencePort {
     Mono<Long> countEnrollmentsByUserId(Long userId);
     Flux<BootcampEnrollment> findEnrollmentsByUserId(Long userId);
     Flux<Bootcamp> findBootcampsByUserId(Long userId);
+    Flux<Long> findUserIdsByBootcampId(Long bootcampId);
     Mono<Boolean> isUserEnrolled(Long bootcampId, Long userId);
 }

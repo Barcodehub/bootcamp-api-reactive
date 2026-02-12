@@ -59,6 +59,8 @@ external:
     base-url: ${BASE_URL_TECH:http://localhost:8080}
   user:
     base-url: ${BASE_URL_USER:http://localhost:8083}
+  metrics:
+    base-url: ${BASE_URL_METRICS:http://localhost:8084}
 
 jwt:
   secret: mySecretKeyForJWT2026ThisIsA32CharacterKeyMinimumForHS256Algorithm

@@ -9,4 +9,5 @@ public interface EnrollmentServicePort {
     Mono<BootcampEnrollment> enrollUserInBootcamp(Long bootcampId, Long userId, String messageId);
     Mono<Void> unenrollUserFromBootcamp(Long bootcampId, Long userId, String messageId);
     Flux<Bootcamp> getUserBootcamps(Long userId, String messageId);
+    Flux<Long> getUserIdsByBootcampId(Long bootcampId, String messageId);
 }

@@ -4,6 +4,7 @@ import com.example.resilient_api.domain.api.BootcampServicePort;
 import com.example.resilient_api.domain.enums.TechnicalMessage;
 import com.example.resilient_api.domain.exceptions.BusinessException;
 import com.example.resilient_api.domain.exceptions.TechnicalException;
+import com.example.resilient_api.infrastructure.adapters.webclient.MetricsWebClient;
 import com.example.resilient_api.infrastructure.entrypoints.dto.BootcampDTO;
 import com.example.resilient_api.infrastructure.entrypoints.dto.BootcampIdsRequest;
 import com.example.resilient_api.infrastructure.entrypoints.dto.BootcampWithCapacitiesDTO;
@@ -37,13 +38,22 @@ public class BootcampHandlerImpl {
 
     private final BootcampServicePort bootcampServicePort;
     private final BootcampMapper bootcampMapper;
+    private final MetricsWebClient metricsWebClient;
 
     public Mono<ServerResponse> createBootcamp(ServerRequest request) {
         String messageId = getMessageId(request);
+        String authToken = request.headers().firstHeader("Authorization");
+
         return request.bodyToMono(BootcampDTO.class)
                 .flatMap(bootcamp -> bootcampServicePort.registerBootcamp(
                         bootcampMapper.bootcampDTOToBootcamp(bootcamp), messageId)
-                        .doOnSuccess(savedBootcamp -> log.info("Bootcamp created successfully with messageId: {}", messageId))
+                        .doOnSuccess(savedBootcamp -> {
+
+                            // Registrar reporte
+                                log.info("=== HANDLER === Calling registerBootcampReportAsync");
+                                metricsWebClient.registerBootcampReportAsync(savedBootcamp.id(), messageId, authToken);
+
+                        })
                 )
                 .flatMap(savedBootcamp ->
                         ServerResponse.status(HttpStatus.CREATED)
@@ -79,13 +89,16 @@ public class BootcampHandlerImpl {
         int page = request.queryParam("page")
                 .map(Integer::parseInt)
                 .orElse(PaginationRequest.DEFAULT_PAGE);
+
         int size = request.queryParam("size")
                 .map(Integer::parseInt)
                 .orElse(PaginationRequest.DEFAULT_SIZE);
+
         PaginationRequest.SortField sortBy = request.queryParam("sortBy")
                 .map(String::toUpperCase)
                 .map(PaginationRequest.SortField::valueOf)
                 .orElse(PaginationRequest.SortField.NAME);
+
         PaginationRequest.SortDirection sortDirection = request.queryParam("sortDirection")
                 .map(String::toUpperCase)
                 .map(PaginationRequest.SortDirection::valueOf)
@@ -132,6 +145,39 @@ public class BootcampHandlerImpl {
                 .contextWrite(Context.of(X_MESSAGE_ID, messageId))
                 .doOnSuccess(response -> log.info("Bootcamps listed successfully with messageId: {}", messageId))
                 .doOnError(ex -> log.error("Error listing bootcamps for messageId: {}", messageId, ex))
+                .onErrorResume(TechnicalException.class, ex -> handleTechnicalException(ex, messageId))
+                .onErrorResume(ex -> handleUnexpectedException(ex, messageId));
+    }
+
+    public Mono<ServerResponse> getBootcampById(ServerRequest request) {
+        String messageId = getMessageId(request);
+        Long id = Long.valueOf(request.pathVariable("id"));
+
+        return bootcampServicePort.getBootcampById(id, messageId)
+                .map(bootcamp -> BootcampWithCapacitiesDTO.builder()
+                        .id(bootcamp.id())
+                        .name(bootcamp.name())
+                        .description(bootcamp.description())
+                        .launchDate(bootcamp.launchDate())
+                        .duration(bootcamp.duration())
+                        .capacities(bootcamp.capacities().stream()
+                                .map(capacity -> CapacitySummaryDTO.builder()
+                                        .id(capacity.id())
+                                        .name(capacity.name())
+                                        .technologies(capacity.technologies().stream()
+                                                .map(tech -> TechnologySummaryDTO.builder()
+                                                        .id(tech.id())
+                                                        .name(tech.name())
+                                                        .build())
+                                                .toList())
+                                        .build())
+                                .toList())
+                        .build())
+                .flatMap(bootcampDTO -> ServerResponse.ok().bodyValue(bootcampDTO))
+                .contextWrite(Context.of(X_MESSAGE_ID, messageId))
+                .doOnSuccess(response -> log.info("Bootcamp retrieved successfully with messageId: {}", messageId))
+                .doOnError(ex -> log.error("Error retrieving bootcamp for messageId: {}", messageId, ex))
+                .onErrorResume(BusinessException.class, ex -> handleBusinessException(ex, messageId))
                 .onErrorResume(TechnicalException.class, ex -> handleTechnicalException(ex, messageId))
                 .onErrorResume(ex -> handleUnexpectedException(ex, messageId));
     }

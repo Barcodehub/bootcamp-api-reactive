@@ -2,6 +2,7 @@ package com.example.resilient_api.infrastructure.adapters.webclient;
 
 import com.example.resilient_api.domain.exceptions.TechnicalException;
 import com.example.resilient_api.domain.model.CapacitySummary;
+import com.example.resilient_api.infrastructure.adapters.webclient.dto.CapacityExistsResponse;
 import com.example.resilient_api.infrastructure.adapters.webclient.dto.CapacityIdsRequest;
 import com.example.resilient_api.infrastructure.adapters.webclient.dto.CapacitySummaryResponse;
 import lombok.RequiredArgsConstructor;
@@ -48,9 +49,8 @@ public class CapacityWebClient {
                         log.error("Capacity service returned 4xx error for messageId: {}", messageId);
                         return Mono.error(new TechnicalException(TECHNOLOGY_SERVICE_ERROR));
                     })
-                .bodyToMono(Map.class)
-                .cast(Map.class)
-                .map(map -> (Map<Long, Boolean>) map)
+                .bodyToMono(CapacityExistsResponse.class)
+                .map(CapacityExistsResponse::getExists)
                 .doOnSuccess(result -> log.info("Successfully received response from capacity service with messageId: {}", messageId))
                 .doOnError(ex -> log.error("Error calling capacity service for messageId: {}", messageId, ex))
                 .onErrorResume(ex -> {

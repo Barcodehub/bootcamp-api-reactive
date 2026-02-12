@@ -10,6 +10,7 @@ import com.example.resilient_api.domain.model.CapacitySummary;
 import com.example.resilient_api.domain.api.BootcampServicePort;
 import com.example.resilient_api.domain.spi.BootcampPersistencePort;
 import com.example.resilient_api.domain.spi.CapacityExternalServicePort;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;
@@ -37,10 +38,16 @@ public class BootcampUseCase implements BootcampServicePort {
 
     @Override
     public Mono<Bootcamp> registerBootcamp(Bootcamp bootcamp, String messageId) {
-        return validateBootcamp(bootcamp)
-                .then(validateCapacities(bootcamp.capacityIds()))
-                .then(checkCapacitiesExistInExternalService(bootcamp.capacityIds(), messageId))
-                .then(bootcampPersistencePort.existByName(bootcamp.name()))
+        return Mono.defer(() -> {
+                    try {
+                        validateBootcampSync(bootcamp);
+                        validateCapacitiesSync(bootcamp.capacityIds());
+                    } catch (BusinessException e) {
+                        return Mono.error(e);
+                    }
+                    return checkCapacitiesExistInExternalService(bootcamp.capacityIds(), messageId)
+                            .then(bootcampPersistencePort.existByName(bootcamp.name()));
+                })
                 .filter(exists -> !exists)
                 .switchIfEmpty(Mono.error(new BusinessException(TechnicalMessage.TECHNOLOGY_ALREADY_EXISTS)))
                 .flatMap(exists -> bootcampPersistencePort.save(bootcamp));
@@ -92,6 +99,13 @@ public class BootcampUseCase implements BootcampServicePort {
     }
 
     @Override
+    public Mono<BootcampWithCapacities> getBootcampById(Long id, String messageId) {
+        return bootcampPersistencePort.findById(id)
+                .switchIfEmpty(Mono.error(new BusinessException(TechnicalMessage.BOOTCAMP_NOT_FOUND)))
+                .flatMap(bootcamp -> enrichBootcampWithCapacities(bootcamp, messageId));
+    }
+
+    @Override
     public Mono<Void> deleteBootcamp(Long id, String messageId) {
         // 1. Verificar que el bootcamp existe
         return bootcampPersistencePort.findById(id)
@@ -108,7 +122,7 @@ public class BootcampUseCase implements BootcampServicePort {
                                 }
 
                                 // 3. Para cada capacidad, contar cuántos bootcamps la referencian
-                                return reactor.core.publisher.Flux.fromIterable(capacityIds)
+                                return Flux.fromIterable(capacityIds)
                                         .flatMap(capacityId ->
                                             bootcampPersistencePort.countBootcampsByCapacityId(capacityId)
                                                 .map(count -> new Object() {
@@ -141,7 +155,7 @@ public class BootcampUseCase implements BootcampServicePort {
             List<Bootcamp> bootcamps, String messageId) {
 
         return reactor.core.publisher.Flux.fromIterable(bootcamps)
-                .concatMap(bootcamp ->
+                .flatMap(bootcamp ->
                     bootcampPersistencePort.findCapacityIdsByBootcampId(bootcamp.id())
                             .collectList()
                             .flatMap(capacityIds -> {
@@ -167,57 +181,83 @@ public class BootcampUseCase implements BootcampServicePort {
                                                 bootcamp.duration(),
                                                 capacities
                                         ));
-                            })
+                            }), 255
                 );
     }
 
-    private Mono<Void> validateBootcamp(Bootcamp bootcamp) {
-        if (bootcamp.name() == null || bootcamp.name().trim().isEmpty()) {
-            return Mono.error(new BusinessException(TechnicalMessage.TECHNOLOGY_NAME_REQUIRED));
-        }
-        if (bootcamp.description() == null || bootcamp.description().trim().isEmpty()) {
-            return Mono.error(new BusinessException(TechnicalMessage.TECHNOLOGY_DESCRIPTION_REQUIRED));
-        }
-        if (bootcamp.name().length() > MAX_NAME_LENGTH) {
-            return Mono.error(new BusinessException(TechnicalMessage.TECHNOLOGY_NAME_TOO_LONG));
-        }
-        if (bootcamp.description().length() > MAX_DESCRIPTION_LENGTH) {
-            return Mono.error(new BusinessException(TechnicalMessage.TECHNOLOGY_DESCRIPTION_TOO_LONG));
-        }
-        if (bootcamp.launchDate() == null) {
-            return Mono.error(new BusinessException(TechnicalMessage.BOOTCAMP_LAUNCH_DATE_REQUIRED));
-        }
-        if (bootcamp.launchDate().isBefore(LocalDate.now())) {
-            return Mono.error(new BusinessException(TechnicalMessage.BOOTCAMP_LAUNCH_DATE_PAST));
-        }
-        if (bootcamp.duration() == null || bootcamp.duration() < MIN_DURATION) {
-            return Mono.error(new BusinessException(TechnicalMessage.BOOTCAMP_DURATION_INVALID));
-        }
-        return Mono.empty();
+    private Mono<BootcampWithCapacities> enrichBootcampWithCapacities(Bootcamp bootcamp, String messageId) {
+        return bootcampPersistencePort.findCapacityIdsByBootcampId(bootcamp.id())
+                .collectList()
+                .flatMap(capacityIds -> {
+                    if (capacityIds.isEmpty()) {
+                        return Mono.just(new BootcampWithCapacities(
+                                bootcamp.id(),
+                                bootcamp.name(),
+                                bootcamp.description(),
+                                bootcamp.launchDate(),
+                                bootcamp.duration(),
+                                List.of()
+                        ));
+                    }
+
+                    // Consultar las capacidades con sus tecnologías al servicio externo
+                    return capacityExternalServicePort.getCapacitiesWithTechnologies(capacityIds, messageId)
+                            .collectList()
+                            .map(capacities -> new BootcampWithCapacities(
+                                    bootcamp.id(),
+                                    bootcamp.name(),
+                                    bootcamp.description(),
+                                    bootcamp.launchDate(),
+                                    bootcamp.duration(),
+                                    capacities
+                            ));
+                });
     }
 
-    private Mono<Void> validateCapacities(List<Long> capacityIds) {
+    private void validateBootcampSync(Bootcamp bootcamp) {
+        if (bootcamp.name() == null || bootcamp.name().trim().isEmpty()) {
+            throw new BusinessException(TechnicalMessage.TECHNOLOGY_NAME_REQUIRED);
+        }
+        if (bootcamp.description() == null || bootcamp.description().trim().isEmpty()) {
+            throw new BusinessException(TechnicalMessage.TECHNOLOGY_DESCRIPTION_REQUIRED);
+        }
+        if (bootcamp.name().length() > MAX_NAME_LENGTH) {
+            throw new BusinessException(TechnicalMessage.TECHNOLOGY_NAME_TOO_LONG);
+        }
+        if (bootcamp.description().length() > MAX_DESCRIPTION_LENGTH) {
+            throw new BusinessException(TechnicalMessage.TECHNOLOGY_DESCRIPTION_TOO_LONG);
+        }
+        if (bootcamp.launchDate() == null) {
+            throw new BusinessException(TechnicalMessage.BOOTCAMP_LAUNCH_DATE_REQUIRED);
+        }
+        if (bootcamp.launchDate().isBefore(LocalDate.now())) {
+            throw new BusinessException(TechnicalMessage.BOOTCAMP_LAUNCH_DATE_PAST);
+        }
+        if (bootcamp.duration() == null || bootcamp.duration() < MIN_DURATION) {
+            throw new BusinessException(TechnicalMessage.BOOTCAMP_DURATION_INVALID);
+        }
+    }
+
+    private void validateCapacitiesSync(List<Long> capacityIds) {
         // Validar que se proporcionen capacidades
         if (capacityIds == null || capacityIds.isEmpty()) {
-            return Mono.error(new BusinessException(TechnicalMessage.BOOTCAMP_CAPACITIES_REQUIRED));
+            throw new BusinessException(TechnicalMessage.BOOTCAMP_CAPACITIES_REQUIRED);
         }
 
         // Validar mínimo de capacidades
         if (capacityIds.size() < MIN_CAPACITIES) {
-            return Mono.error(new BusinessException(TechnicalMessage.BOOTCAMP_CAPACITIES_MIN));
+            throw new BusinessException(TechnicalMessage.BOOTCAMP_CAPACITIES_MIN);
         }
 
         // Validar máximo de capacidades
         if (capacityIds.size() > MAX_CAPACITIES) {
-            return Mono.error(new BusinessException(TechnicalMessage.BOOTCAMP_CAPACITIES_MAX));
+            throw new BusinessException(TechnicalMessage.BOOTCAMP_CAPACITIES_MAX);
         }
 
         // Validar que no haya capacidades duplicadas
         if (capacityIds.size() != new HashSet<>(capacityIds).size()) {
-            return Mono.error(new BusinessException(TechnicalMessage.BOOTCAMP_CAPACITIES_DUPLICATED));
+            throw new BusinessException(TechnicalMessage.BOOTCAMP_CAPACITIES_DUPLICATED);
         }
-
-        return Mono.empty();
     }
 
     private Mono<Void> checkCapacitiesExistInExternalService(List<Long> capacityIds, String messageId) {
@@ -232,5 +272,4 @@ public class BootcampUseCase implements BootcampServicePort {
                 });
     }
 }
-
 

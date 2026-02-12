@@ -38,11 +38,19 @@ public class EnrollmentUseCase implements EnrollmentServicePort {
         log.info("Processing enrollment request for user {} in bootcamp {} with messageId: {}",
                 userId, bootcampId, messageId);
 
-        return validateUserExists(userId, messageId)
-                .then(bootcampPersistencePort.findById(bootcampId))
+        return validateUserExistsSync(userId, messageId)
+                .then(Mono.defer(() -> bootcampPersistencePort.findById(bootcampId)))
                 .switchIfEmpty(Mono.error(new BusinessException(TechnicalMessage.BOOTCAMP_NOT_FOUND)))
-                .flatMap(bootcamp -> validateEnrollment(bootcamp, userId, messageId)
-                        .then(enrollmentPersistencePort.enrollUser(bootcampId, userId)))
+                .flatMap(bootcamp -> enrollmentPersistencePort.isUserEnrolled(bootcamp.id(), userId)
+                        .flatMap(isEnrolled -> {
+                            if (isEnrolled) {
+                                log.warn("User {} is already enrolled in bootcamp {}", userId, bootcamp.id());
+                                return Mono.error(new BusinessException(TechnicalMessage.USER_ALREADY_ENROLLED));
+                            }
+                            return validateMaxBootcamps(userId)
+                                    .then(validateDateConflicts(bootcamp, userId, messageId))
+                                    .then(enrollmentPersistencePort.enrollUser(bootcampId, userId));
+                        }))
                 .doOnSuccess(enrollment -> log.info("User {} successfully enrolled in bootcamp {} with messageId: {}",
                         userId, bootcampId, messageId))
                 .doOnError(error -> log.error("Error enrolling user {} in bootcamp {} with messageId: {}",
@@ -56,7 +64,7 @@ public class EnrollmentUseCase implements EnrollmentServicePort {
 
         return enrollmentPersistencePort.isUserEnrolled(bootcampId, userId)
                 .flatMap(isEnrolled -> {
-                    if (!isEnrolled) {
+                    if (Boolean.FALSE.equals(isEnrolled)) {
                         return Mono.error(new BusinessException(TechnicalMessage.ENROLLMENT_NOT_FOUND));
                     }
                     return enrollmentPersistencePort.unenrollUser(bootcampId, userId);
@@ -71,24 +79,18 @@ public class EnrollmentUseCase implements EnrollmentServicePort {
     public Flux<Bootcamp> getUserBootcamps(Long userId, String messageId) {
         log.info("Getting bootcamps for user {} with messageId: {}", userId, messageId);
 
-        return validateUserExists(userId, messageId)
-                .thenMany(enrollmentPersistencePort.findBootcampsByUserId(userId))
+        return validateUserExistsSync(userId, messageId)
+                .thenMany(Flux.defer(() -> enrollmentPersistencePort.findBootcampsByUserId(userId)))
                 .doOnComplete(() -> log.info("Successfully retrieved bootcamps for user {} with messageId: {}",
                         userId, messageId))
                 .doOnError(error -> log.error("Error getting bootcamps for user {} with messageId: {}",
                         userId, messageId, error));
     }
 
-    private Mono<Void> validateEnrollment(Bootcamp bootcamp, Long userId, String messageId) {
-        return enrollmentPersistencePort.isUserEnrolled(bootcamp.id(), userId)
-                .flatMap(isEnrolled -> {
-                    if (isEnrolled) {
-                        log.warn("User {} is already enrolled in bootcamp {}", userId, bootcamp.id());
-                        return Mono.error(new BusinessException(TechnicalMessage.USER_ALREADY_ENROLLED));
-                    }
-                    return validateMaxBootcamps(userId);
-                })
-                .then(validateDateConflicts(bootcamp, userId, messageId));
+    @Override
+    public Flux<Long> getUserIdsByBootcampId(Long bootcampId, String messageId) {
+        log.info("Getting user IDs for bootcamp: {} with messageId: {}", bootcampId, messageId);
+        return enrollmentPersistencePort.findUserIdsByBootcampId(bootcampId);
     }
 
     private Mono<Void> validateMaxBootcamps(Long userId) {
@@ -116,7 +118,6 @@ public class EnrollmentUseCase implements EnrollmentServicePort {
                                 LocalDate existingStart = existingBootcamp.launchDate();
                                 LocalDate existingEnd = existingStart.plusDays(existingBootcamp.duration());
 
-                                // Verificar si hay solapamiento de fechas
                                 boolean overlaps = !(newBootcampEnd.isBefore(existingStart) ||
                                                     newBootcampStart.isAfter(existingEnd));
 
@@ -137,7 +138,7 @@ public class EnrollmentUseCase implements EnrollmentServicePort {
                 });
     }
 
-    private Mono<Void> validateUserExists(Long userId, String messageId) {
+    private Mono<Void> validateUserExistsSync(Long userId, String messageId) {
         return userExternalServicePort.checkUsersExist(List.of(userId), messageId)
                 .flatMap(existenceMap -> {
                     Boolean exists = null;

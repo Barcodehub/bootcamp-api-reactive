@@ -72,6 +72,12 @@ public class EnrollmentPersistenceAdapter implements EnrollmentPersistencePort {
     }
 
     @Override
+    public Flux<Long> findUserIdsByBootcampId(Long bootcampId) {
+        return bootcampUserRepository.findByBootcampId(bootcampId)
+                .map(BootcampUserEntity::getUserId);
+    }
+
+    @Override
     public Mono<Boolean> isUserEnrolled(Long bootcampId, Long userId) {
         return bootcampUserRepository.findByBootcampIdAndUserId(bootcampId, userId)
                 .hasElement();

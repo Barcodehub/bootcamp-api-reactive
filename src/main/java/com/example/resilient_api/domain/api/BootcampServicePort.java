@@ -13,6 +13,7 @@ public interface BootcampServicePort {
     Mono<Bootcamp> registerBootcamp(Bootcamp bootcamp, String messageId);
     Mono<Map<Long, Boolean>> checkBootcampsExist(List<Long> ids, String messageId);
     Mono<Page<BootcampWithCapacities>> listBootcamps(PaginationRequest paginationRequest, String messageId);
+    Mono<BootcampWithCapacities> getBootcampById(Long id, String messageId);
     Mono<Void> deleteBootcamp(Long id, String messageId);
 }
 
